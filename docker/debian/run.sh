@@ -48,4 +48,9 @@ docker run $DOCKER_FLAGS --rm --user=nipa \
        -v $PWD/ccache:/home/nipa/.ccache \
        -v $PWD/ccache:/root/.ccache \
        --name nipa-local nipa-local \
-       /nipa/ingest_mdir.py --mdir /nipa-patches --tree /nipa-run/tree --tree-name $NIPA_TREE_NAME
+       /nipa/ingest_mdir.py --mdir /nipa-patches --tree /nipa-run/tree --tree-name $NIPA_TREE_NAME 
+    #    --disable-test patch/build_32bit \
+                #  patch/build_allmodconfig_warn \
+    #    --tree-branch nipa-local
+    # patch/build_clang \
+		#  patch/build_clang_rust

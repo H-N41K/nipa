@@ -11,8 +11,15 @@ tmpfile_o=$(mktemp)
 tmpfile_n=$(mktemp)
 rc=0
 
+# Visual helper for scannable terminal tracking
+status_echo() {
+    echo -e "\n\033[1;35m[NIPA 32-BIT STATUS]\033[0m $1"
+}
+
 prep_config() {
-  make CC="$cc" O=$output_dir ARCH=i386 allmodconfig
+  status_echo "Generating 32-bit i386 Kconfig via allmodconfig..."
+  # Added -q flag so configuration entries don't flood your console log
+  make -q CC="$cc" O=$output_dir ARCH=i386 allmodconfig
   ./scripts/config --file $output_dir/.config -d werror
   ./scripts/config --file $output_dir/.config -d drm_werror
   ./scripts/config --file $output_dir/.config -d kvm_werror
@@ -20,7 +27,6 @@ prep_config() {
 
 clean_up_output() {
     local file=$1
-
     # modpost triggers this randomly on use of existing symbols
     sed -i '/arch\/x86\/boot.* warning: symbol .* was not declared. Should it be static?/d' $file
 }
@@ -37,10 +43,9 @@ git log -1 --pretty='%h ("%s")' HEAD~
 if [ x$FIRST_IN_SERIES == x0 ] && \
    ! git diff --name-only HEAD~ | grep -q -E "Kconfig$"
 then
-    echo "Skip baseline build, not the first patch and no Kconfig updates"
+    status_echo "Skipping baseline build (not the first patch, no Kconfig updates)."
 else
-    echo "Baseline building the tree"
-
+    status_echo "Compiling the initial baseline tree (this will take a while)..."
     prep_config
     make CC="$cc" O=$output_dir ARCH=i386 $build_flags
 fi
@@ -54,40 +59,47 @@ if ! git log --diff-filter=A HEAD~.. --exit-code >>/dev/null || \
    git diff --name-only HEAD~ | grep -q -E "Makefile$" || \
    git diff --name-only HEAD~ | grep -q -E "Kconfig$"
 then
-    echo "Trying to force re-linking, new files were added"
+    status_echo "Structural configuration changes detected. Forcing cross-module re-linking..."
     touch_relink=${output_dir}/include/generated/utsrelease.h
 fi
 
 touch $touch_relink
 
+status_echo "Checking out baseline commit (HEAD~)..."
 git checkout -q HEAD~
 
-echo "Building the tree before the patch"
-
+status_echo "Compiling base kernel framework (WITHOUT your patch applied)..."
 prep_config
 make CC="$cc" O=$output_dir ARCH=i386 $build_flags 2> >(tee $tmpfile_o >&2)
+# NEW ONE make CC="$cc" O=$output_dir ARCH=i386 $build_flags 2> >(stdbuf -oL -eL tee $tmpfile_o >&2)
+
 clean_up_output $tmpfile_o
 incumbent=$(grep -i -c "\(warn\|error\)" $tmpfile_o)
+status_echo "Baseline 32-bit build complete. Found $incumbent existing warnings/errors."
 
-echo "Building the tree with the patch"
-
+status_echo "Returning to patch target commit (HEAD)..."
 git checkout -q $HEAD
 
 # Also force rebuild "after" in case the file added isn't important.
 touch $touch_relink
 
+status_echo "Compiling modified kernel framework (WITH your patch applied)..."
 prep_config
 make CC="$cc" O=$output_dir ARCH=i386 $build_flags 2> >(tee $tmpfile_n >&2) || rc=1
+# new one make CC="$cc" O=$output_dir ARCH=i386 $build_flags 2> >(stdbuf -oL -eL tee $tmpfile_n >&2) || rc=1
+
+
 clean_up_output $tmpfile_n
 current=$(grep -i -c "\(warn\|error\)" $tmpfile_n)
+status_echo "Patch 32-bit build complete. Found $current total warnings/errors."
 
 echo "Errors and warnings before: $incumbent this patch: $current" >&$DESC_FD
 
 if [ $current -gt $incumbent ]; then
-  echo "New errors added" 1>&2
+  status_echo "Regression detected! Printing compiler warning comparisons..." 1>&2
   diff -U 0 $tmpfile_o $tmpfile_n 1>&2
 
-  echo "Per-file breakdown" 1>&2
+  status_echo "Isolating per-file delta regression points..." 1>&2
   tmpfile_fo=$(mktemp)
   tmpfile_fn=$(mktemp)
 
@@ -100,6 +112,8 @@ if [ $current -gt $incumbent ]; then
   rm $tmpfile_fo $tmpfile_fn
 
   rc=1
+else
+  status_echo "Success! No 32-bit regression warnings introduced by this patch."
 fi
 
 rm $tmpfile_o $tmpfile_n
